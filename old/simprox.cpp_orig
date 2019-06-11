@@ -1,0 +1,398 @@
+/*
+ * Attempt to analyse the cosmic data of GEM module test root data
+ *
+ * the root file must be processed by mpd*_decoder or similar, with pedestal subtraction
+ * 
+ *
+ * run root
+ * .L simpro.cpp+
+ *
+ * simpro("test_1.root")
+ *
+ * where test_1.root is the output of mdp*_decoder ..
+ *
+ * the filename can contain wildcard to load multiple files in one shot
+ * two additional filename parameters can be provided to simpro,
+ *  to add root file to the analysis
+ *
+ * Author: E. Cisbani
+ *
+ */
+
+
+#include <stdio.h>
+#include <TROOT.h>
+#include <TSystem.h>
+#include <TFile.h>
+#include <TTree.h>
+#include <TString.h>
+#include <TCanvas.h>
+#include <TGraph.h>
+#include <TF1.h>
+#include <TH1F.h>
+#include <TH2F.h>
+#include <TStyle.h>
+#include <TCut.h>
+#include <TMath.h>
+#include <TColor.h>
+#include <TChain.h>
+#include <TLegend.h>
+#include <TText.h>
+#include <TLine.h>
+#include <TFitResult.h>
+
+// Custom Color Palette
+Int_t *fCPalette;
+Int_t fNColor;
+
+Int_t createGradientColor(Int_t nb) {
+
+  Double_t Red[3]    = { 1.0, 0.50, 0.00};
+  Double_t Green[3]  = { 1.0, 0.50, 0.00};
+  Double_t Blue[3]   = { 1.0, 0.25, 0.00};
+  Double_t Length[3] = { 0.00, 0.25, 1.00 };
+  Int_t FI = TColor::CreateGradientColorTable(3,Length,Red,Green,Blue,nb);
+  fCPalette = new Int_t[nb];
+  fNColor = nb;
+  for (int i=0;i<nb;i++) fCPalette[i] = FI+i;
+
+  return 0;
+
+}
+
+/*
+ *
+ *
+ */
+
+Float_t xcor(Float_t x[6], Float_t y[6]) {
+
+  Float_t sx=0;
+  Float_t sy=0;
+
+  Float_t mx=0;
+  Float_t my=0;
+
+  Float_t cxy=0;
+  
+  for (Int_t i=0;i<6;i++) {
+    mx += x[i];
+    my += y[i];
+    sx += x[i]*x[i];
+    sy += y[i]*y[i];
+    cxy += x[i]*y[i];
+  }
+
+  // standard deviation
+  sx = TMath::Sqrt((sx - mx)/5.);
+  sy = TMath::Sqrt((sy - my)/5.);
+
+  // cross correlation coefficient (at 0)
+  //  cxy = 0.; // ???
+  if ((sx != 0) && (sy != 0)) {
+    cxy = (cxy - mx*my/6.)/6./(sx*sy);
+  }
+
+  // mean (not used)
+  mx = mx / 6.;
+  my = my / 6.;
+
+  //  printf(" xcor : %f\n",cxy);
+  
+  return -cxy;
+  
+};
+
+Float_t mapx(Int_t det, Float_t local) {
+
+  return local;
+  
+};
+
+Float_t mapy(Int_t det, Float_t local) {
+
+  return ((det % 3)*1280 + local);
+
+};
+
+Float_t mapz(Int_t det) {
+
+  Float_t zdet[12]={762.5,762.5,762.5,0,0,0,116.6,116.6,116.6,403,403,403};
+  
+  return zdet[det];
+  
+}
+
+#define NMODULES 12
+#define NCHAMBER NMODULES/3
+
+void simpro(TString ifi0, TString ifi1="", TString ifi2="") {
+
+  Int_t gmod[12]={12,9,15,13,14,10,1,0,4,16,19,17};
+
+  gStyle->SetOptStat(0);
+  Int_t minhit=2; // if hit on x AND on y is less than minhit, the event is skipped
+  
+  createGradientColor(20);
+
+  TH1F *hcx = new TH1F("hcx","Max Correlation x-Hit", NMODULES, -0.5, NMODULES-0.5);
+  hcx->SetLineColor(2);
+  hcx->SetXTitle("x-Tracking");
+  TH1F *hcy = new TH1F("hcy","Max Correlation y-Hit", NMODULES, -0.5, NMODULES-0.5);
+  hcy->SetLineColor(4);
+  hcy->SetXTitle("y-Tracking");
+      
+  TH2F *hcor = new TH2F("hcor","Correlation distributions", NMODULES, -0.5, NMODULES-0.5, 100,-1.,1);
+
+  TH2F *hxy[NMODULES]; // scatter plot x/y of each GEM modules
+  TH2F *hcxy[NCHAMBER]; // scatter plot x/y of each GEM chamber
+
+  for (Int_t im=0;im<NMODULES;im++) {
+    hxy[im] = new TH2F(Form("hxy%d",im),Form("x/y Module %d",gmod[im]), 1024, -0.5,1023.5,1280,-0.5,1279.5);
+    hxy[im]->SetMarkerStyle(6);
+  }
+
+  for (Int_t ic=0;ic<NCHAMBER;ic++) {
+    hcxy[ic] = new TH2F(Form("hcxy%d",ic),Form("x/y Chamber J%d",ic), 1024, -0.5,1024-0.5,1280*3,-0.5,1280*3-0.5);
+    hcxy[ic]->SetMarkerStyle(6);
+  }
+  
+  TH1F *hslx = new TH1F("hslx","Slope X",100,-90.,90.);
+  TH1F *hsly = new TH1F("hsly","Slope Y",100,-90.,90.);
+
+  TH2F *hnull = new TH2F("hnull","Track x(red), y(blue) vs z (mm)",10,-10,1200,10,-800,800);
+
+  TText *mytxt = new TText();
+  
+  TCanvas *cc = new TCanvas("cc","Chamber Summary",1600,900);
+  cc->Divide(NCHAMBER+1,1);
+  cc->Update();
+
+  TCanvas *cca = new TCanvas("cca","Tracks Slopes");
+  cca->Divide(2,2);
+  cca->Update();
+
+  TCanvas *ccb = new TCanvas("ccb","Tracks Samples");
+  ccb->Divide(4,4);
+  ccb->Update();
+
+  TChain *tda = new TChain("GEMHit");
+  tda->Add(ifi0.Data());
+  tda->Add(ifi1.Data());
+  tda->Add(ifi2.Data());
+
+  Int_t currentFile;
+  Int_t evtID, nch;
+  Int_t strip[2048];
+  Int_t detID[2048];
+  Int_t planeID[2048];
+  Int_t adc[6][2048];
+  
+  Int_t ix[NMODULES][2048], iy[NMODULES][2048]; // number of gem modules, strips index
+  Int_t nx[NMODULES], ny[NMODULES];
+
+  tda->SetBranchAddress("evtID",&evtID);
+  tda->SetBranchAddress("nch",&nch);
+  tda->SetBranchAddress("strip",strip);
+  tda->SetBranchAddress("planeID",planeID);
+  tda->SetBranchAddress("detID",detID);
+
+  for (Int_t i=0;i<6;i++) { // samples
+    tda->SetBranchAddress(Form("adc%d",i),&adc[i][0]);
+  }
+
+  cc->cd(1);
+  tda->Draw("strip");
+
+  Int_t nentries = tda->GetEntries();
+
+  Int_t nfiles = tda->GetListOfFiles()->GetEntries();
+    
+  printf(" Number of files in chain %d\n",nfiles);
+
+  Int_t idxfile=0;
+  TString fnameold="";
+  
+  TCanvas *cde = new TCanvas("cde","Detailed x/y profiles",1024,1280);
+  Int_t ncx,ncy;
+  //  ncx = (Int_t) TMath::Sqrt(NMODULES);
+  //  ncy = TMath::Ceil(NMODULES/ncx);
+  ncx = NCHAMBER;
+  ncy = NMODULES/NCHAMBER; // 3
+
+  cde->Divide(ncx,ncy);
+  cde->Update();
+
+  Int_t evtID_old=-1;
+  Int_t itkr=0;
+  
+  //  nentries=10000;
+  for (Int_t i=0;i<nentries;i++) {
+
+    tda->GetEntry(i);
+
+    for (Int_t im=0;im<NMODULES;im++) {
+      nx[im] = 0;
+      ny[im] = 0;
+    }
+    
+    // associate ch (strip) to x or y axis
+
+    for (Int_t j=0;j<nch;j++) {
+      if (nch>2048) {
+	printf(" %d %d : out of bound, skip additional channels\n",i,j);
+	break;
+      }
+      Int_t jm = detID[j]; // index of module
+      if (planeID[j]==0) { // x axis
+	ix[jm][nx[jm]] = j;
+	nx[jm]++;
+      } else {
+	iy[jm][ny[jm]] = j;
+	ny[jm]++;
+      }
+    }
+
+    // loop on detectors (GEM modules) to get hit
+    
+    Int_t selx[NMODULES], sely[NMODULES]; // GEM modules
+    Float_t selc[NMODULES]; // correlation
+
+    Int_t flaghit=0;
+    Float_t maxcor=-1;
+
+    for (Int_t im=0;im<NMODULES;im++) {
+      selx[im]=-1;
+      sely[im]=-1;
+      selc[im]=-1;
+      maxcor=-1;
+      
+      if ((nx[im]<minhit) && (ny[im]<minhit)) { continue; }
+
+      for (Int_t jx = 0; jx<nx[im]; jx++) {
+	Float_t axa[6];
+	Float_t chargex=0;
+	for (Int_t jj=0;jj<6;jj++) {
+	  axa[jj] = adc[jj][ix[im][jx]];
+	  chargex += axa[jj];
+	}
+      
+	for (Int_t jy = 0; jy<ny[im]; jy++) {	
+	  Float_t aya[6];
+	  Float_t chargey=0;
+	  for (Int_t jj=0;jj<6;jj++) {
+	    aya[jj] = adc[jj][iy[im][jy]];
+	    chargey += aya[jj];
+	  }
+	
+	  Float_t ccor = xcor(axa, aya);
+	  hcor->Fill(im,ccor);
+	  
+	  if (ccor>maxcor) { // choose candidate 2d-hit as correlation maximum
+	    maxcor = ccor;
+	    selx[im] = ix[im][jx];
+	    sely[im] = iy[im][jy];
+	    selc[im]=ccor;
+	  }
+	  
+	}
+	
+      }
+
+      if ((selx[im]>=0) && (sely[im]>=0)) {
+	hxy[im]->Fill(strip[selx[im]], strip[sely[im]]);
+	flaghit=1; // at lest 1 hit
+      }
+      
+    } // im
+
+    Float_t cmx[NCHAMBER], cmy[NCHAMBER], cmz[NCHAMBER]; // GEM chamber hits
+    Float_t xx,yy,zz;
+    Int_t count=0;
+    
+    for (Int_t ic=0;ic<NCHAMBER;ic++) { // chamber
+      xx=yy=zz=-1;
+      maxcor=-1;
+      for (Int_t iml=0;iml<3;iml++) { // module
+	Int_t im = ic*3+iml;
+	if (selc[im]>maxcor) {
+	  xx = mapx(im,strip[selx[im]]);
+	  yy = mapy(im,strip[sely[im]]);
+	  zz = mapz(im);
+	}
+      }
+      if (zz>=0) {
+	hcxy[ic]->Fill(xx,yy);
+	cmx[count]=xx*0.4-1024*0.4;
+	cmy[count]=yy*0.4-1280*1.5*0.4;
+	cmz[count]=zz;
+	count++;
+      }
+    }
+
+    if (count>1) { // at least two hits in different chambers
+      TGraph *gx = new TGraph(count,cmz,cmx);
+      TGraph *gy = new TGraph(count,cmz,cmy);
+      gx->SetMarkerStyle(20);
+      gy->SetMarkerStyle(22);
+      
+      TFitResultPtr fitr = gx->Fit("pol1","FQS,EX0"); 
+      Double_t chi2x = fitr->Chi2();
+      Double_t ax = fitr->GetParams()[0];
+      Double_t bx = fitr->GetParams()[1];
+      Double_t slopex = TMath::ATan(bx)*160./3.1415;
+
+      fitr = gy->Fit("pol1","FQS,EX0"); 
+      Double_t chi2y = fitr->Chi2();
+      Double_t ay = fitr->GetParams()[0];
+      Double_t by = fitr->GetParams()[1];
+      Double_t slopey = TMath::ATan(by)*160./3.1415;
+
+      gy->GetFunction("pol1")->SetLineColor(4);
+
+      if ((chi2x<100)&&(chi2y<100)) {
+	hslx->Fill(slopex);
+	hsly->Fill(slopey);
+      }
+      
+      if ((itkr<16)&&(count>=3)&&(chi2x<100)&&(chi2y<100)) {
+	ccb->cd(itkr%16+1);
+	hnull->Draw();
+	gy->Draw("P");
+	gx->Draw("P");
+	mytxt->DrawText(100,600,Form("%.1f %.1f (%d)",chi2x,chi2y,evtID));
+	ccb->Update();
+	itkr++;
+      }
+      
+    }      
+  } // entries
+  
+  cc->cd(1);
+  hcor->Draw("colz");
+  
+  for (Int_t ic=0;ic<NCHAMBER;ic++) {
+    cc->cd(ic+2);
+    hcxy[ic]->Draw("colz");
+  }
+  cc->Update();
+
+  cca->cd(1);
+  hslx->Draw();
+  cca->cd(2);
+  hsly->Draw();
+  cca->Update();
+  
+  for (Int_t im=0;im<NMODULES;im++) {
+    Int_t idx = im/3;
+    Int_t idy = 2 - im % 3; // 3, 2, 1
+
+    Int_t idp = idy * NCHAMBER + idx + 1;
+
+    cde->cd(idp);
+    hxy[im]->Draw();
+  }
+  cde->Update();
+
+  printf(" Tracks detected %d\n",itkr);
+}
