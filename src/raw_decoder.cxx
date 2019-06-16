@@ -198,6 +198,7 @@ map<int, TH1F* > RawDecoder::DrawRawHisto(TCanvas *c)
       vector<int> adc_temp = it->second;
       int N = adc_temp.size();//cout<<"adc_tempsize:"<<N<<endl;
  
+ std::cout<<"MPD:: "<< mpd_id<<std::endl;
       TH1F* h = new TH1F(Form("mpd_%d_ch_%d",mpd_id, adc_ch), Form("mpd_%d_ch_%d_raw_data",mpd_id, adc_ch), 780, 0, 779);
  
       //     cout<<"EventNb = "<<idx_ec<<"  mpdid: "<<mpd_id<<"  adcCh: "<<adc_ch<<"  histo: "<<h->GetName()<<" nbAPVs: "<<nbAPVs<<endl;
@@ -213,12 +214,13 @@ map<int, TH1F* > RawDecoder::DrawRawHisto(TCanvas *c)
       draw_index = mpd_count * 16 + adc_ch + 1;
 
       //c->cd((mpd_id-mpd_off)*15+adc_ch+1)->SetLogy();
-      c->cd(draw_index)->SetLogy();
-      mAPVRawHisto[hybridID]->SetMaximum(2500);
-      mAPVRawHisto[hybridID]->SetMinimum(500);
-      mAPVRawHisto[hybridID]->Draw();
+      c->cd(draw_index);//->SetLogy();
+      mAPVRawHisto[hybridID]->SetMaximum(3000);
+      mAPVRawHisto[hybridID]->SetMinimum(100);
+      mAPVRawHisto[hybridID]->Draw("HISTO");
       nbAPVs++ ;
       last_mpd_id = mpd_id;
+      
     }
   map<int, TH1F*>::iterator itRaw;
 

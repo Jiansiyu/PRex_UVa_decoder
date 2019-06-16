@@ -55,7 +55,7 @@ int InputHandler::Initialize()
   if(runtype=="RawDataMonitor") 
     {
       gStyle->SetOptStat(0);
-      cRaw = new TCanvas("Raw_frame_Monitor","Raw Frame Monitor",0,0,1300, 1000);
+      cRaw = new TCanvas("Raw_frame_Monitor","Raw Frame Monitor",0,0,2000, 2000);
       cRaw->Divide(raw_co,raw_row);
       //cRaw->Divide(15,16,0.000001, 0.000001);
       /*  
